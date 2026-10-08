@@ -22,6 +22,11 @@ def get_target_expiry_date(now):
     return target.strftime("%d-%b-%Y")
 
 
+def round_half_up(x):
+    """0.5 and above rounds up to next number, below 0.5 drops the decimal."""
+    return int(x + 0.5)
+
+
 def prime_value(total):
     half = total / 2
     rounded = int(half + 0.5) if half % 1 >= 0.5 else int(half)
@@ -75,16 +80,15 @@ def process(df_raw, nifty_spot, now):
     st.caption(f"ATM strike base: {int(atm)}")
 
     # Build table
-    records = {s: {"Strike": int(s), "CE": 0.0, "PE": 0.0} for s in selected}
+    records = {s: {"Strike": int(s), "CE": 0, "PE": 0} for s in selected}
     for _, row in df_100s[df_100s["Strike Price"].isin(selected)].iterrows():
         if row["Option Type"] in ("CE", "PE"):
-            records[row["Strike Price"]][row["Option Type"]] = row["Settlement Price"]
+            # Round CE/PE first; rounded values are used for all calculations
+            records[row["Strike Price"]][row["Option Type"]] = round_half_up(row["Settlement Price"])
 
     df = pd.DataFrame(records.values()).sort_values("Strike", ascending=False).reset_index(drop=True)
     df["Total (CE + PE)"] = df["CE"] + df["PE"]
     df["Prime Value (Rounded)"] = df["Total (CE + PE)"].apply(prime_value)
-    for c in ["CE", "PE", "Total (CE + PE)"]:
-        df[c] = df[c].map("{:.2f}".format)
     return df
 
 
