@@ -1,3 +1,4 @@
+import math
 import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
@@ -67,7 +68,47 @@ def prime_value(total):
     return int(total / 2 + 0.5)
 
 
-def process(df_raw, nifty_spot, now):
+def get_itm_strikes(preopen):
+    """
+    ITM strikes from the pre-open value (100-interval):
+      CE strike = nearest hundred strictly below pre-open   (22364 -> 22300)
+      PE strike = nearest hundred strictly above pre-open   (22364 -> 22400)
+    """
+    ce_strike = (math.ceil(preopen / 100) - 1) * 100
+    pe_strike = (math.floor(preopen / 100) + 1) * 100
+    return ce_strike, pe_strike
+
+
+def add_signal_columns(df, preopen):
+    """Adds Green, Orange, Blue, Black columns on the two ITM strike rows."""
+    for c in ["Green", "Orange", "Blue", "Black"]:
+        df[c] = ""
+
+    ce_strike, pe_strike = get_itm_strikes(preopen)
+    missing = []
+
+    # (strike, side it is ITM for, own column, opposite column)
+    for strike, own, other in [(ce_strike, "CE", "PE"), (pe_strike, "PE", "CE")]:
+        rows = df.index[df["Strike"] == strike]
+        if len(rows) == 0:
+            missing.append(f"{strike} {own}")
+            continue
+        i = rows[0]
+        val = df.at[i, own]
+        opp_vals = df[other]
+
+        lower = opp_vals[opp_vals < val]
+        higher = sorted(set(opp_vals[opp_vals > val]))[:3]
+
+        df.at[i, "Green"] = str(val)
+        df.at[i, "Orange"] = str(df.at[i, "Prime Value (Rounded)"])
+        df.at[i, "Black"] = str(lower.max()) if not lower.empty else ""
+        df.at[i, "Blue"] = ", ".join(str(v) for v in higher)
+
+    return df, ce_strike, pe_strike, missing
+
+
+def process(df_raw, nifty_spot, preopen, now):
     df_raw = df_raw.copy()
     df_raw.columns = df_raw.columns.str.strip()
 
@@ -130,20 +171,31 @@ def process(df_raw, nifty_spot, now):
     df = pd.DataFrame(records.values()).sort_values("Strike", ascending=False).reset_index(drop=True)
     df["Total (CE + PE)"] = df["CE"] + df["PE"]
     df["Prime Value (Rounded)"] = df["Total (CE + PE)"].apply(prime_value)
+
+    # ITM strikes from pre-open + Green / Orange / Blue / Black columns
+    df, ce_strike, pe_strike, missing = add_signal_columns(df, preopen)
+    st.caption(f"ITM strikes (pre-open {preopen:g}): {ce_strike} CE, {pe_strike} PE")
+    if missing:
+        st.warning(
+            f"ITM strike(s) {', '.join(missing)} not inside the displayed strike window "
+            f"(built around the spot price), so their columns are blank.")
     return df
 
 
 uploaded = st.file_uploader("Upload bhavcopy CSV", type=["csv"])
 spot = st.number_input("Current NIFTY spot price", min_value=0.0, value=22700.0, step=1.0)
+preopen = st.number_input("Pre Open Strike", min_value=0.0, value=0.0, step=1.0)
 run = st.button("Generate", type="primary")
 
 if run:
     if uploaded is None:
         st.error("Please upload the CSV file first.")
+    elif preopen <= 0:
+        st.error("Please enter the Pre Open Strike value.")
     else:
         try:
             now = datetime.now(IST)
-            df_final = process(pd.read_csv(uploaded), spot, now)
+            df_final = process(pd.read_csv(uploaded), spot, preopen, now)
             st.subheader("Final processed NIFTY option window")
             st.dataframe(df_final, hide_index=True, use_container_width=True)
             st.download_button(
