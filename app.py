@@ -9,17 +9,53 @@ st.set_page_config(page_title="Nifty Option Window", layout="centered")
 st.title("Nifty Option Window")
 
 
-def get_target_expiry_date(now):
-    """Target Tuesday expiry, formatted like '13-Oct-2026'."""
-    wd = now.weekday()  # Mon=0, Tue=1 ...
+def previous_weekday(d):
+    """Previous Mon-Fri date before d (Monday -> Friday)."""
+    d = d - timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+
+def get_trade_date(now):
+    """
+    Which trade date's data to read:
+      - 8:30 PM onwards (till midnight): today's data
+      - before 8:30 PM (e.g. 9 AM - 11 AM morning run): previous trading day's data
+    Weekends are skipped (a Saturday/Sunday run uses Friday's data).
+    """
+    today = now.date()
+    after_cutoff = (now.hour, now.minute) >= (20, 30)
+    if after_cutoff and today.weekday() < 5:
+        return today
+    if today.weekday() >= 5:
+        # Weekend: last trading day is the most recent Friday
+        d = today
+        while d.weekday() >= 5:
+            d -= timedelta(days=1)
+        return d
+    return previous_weekday(today)
+
+
+def get_target_expiry_date(trade_date):
+    """Target Tuesday expiry based on the trade date, formatted like '13-Oct-2026'."""
+    wd = trade_date.weekday()  # Mon=0, Tue=1 ...
     if wd == 0:
-        target = now + timedelta(days=1)
+        target = trade_date + timedelta(days=1)
     elif wd == 1:
-        target = now + timedelta(days=7)
+        target = trade_date + timedelta(days=7)
     else:
         days = (1 - wd) % 7 or 7
-        target = now + timedelta(days=days)
+        target = trade_date + timedelta(days=days)
     return target.strftime("%d-%b-%Y")
+
+
+def parse_dates(series):
+    """Parse dates like 12-Oct-2026 or 12-Oct-26."""
+    s = series.astype(str).str.strip()
+    d4 = pd.to_datetime(s, format="%d-%b-%Y", errors="coerce")
+    d2 = pd.to_datetime(s, format="%d-%b-%y", errors="coerce")
+    return d4.fillna(d2)
 
 
 def round_half_up(x):
@@ -28,9 +64,7 @@ def round_half_up(x):
 
 
 def prime_value(total):
-    half = total / 2
-    rounded = int(half + 0.5) if half % 1 >= 0.5 else int(half)
-    return f"{rounded} ({half:.2f})"
+    return int(total / 2 + 0.5)
 
 
 def process(df_raw, nifty_spot, now):
@@ -47,16 +81,23 @@ def process(df_raw, nifty_spot, now):
         df_raw["Settlement Price"].astype(str).str.replace(",", ""), errors="coerce").fillna(0)
     df_raw["Option Type"] = df_raw["Option Type"].astype(str).str.strip()
 
-    # Filter for today's trade date
-    d4, d2 = now.strftime("%d-%b-%Y"), now.strftime("%d-%b-%y")
-    df_raw["Date"] = df_raw["Date"].astype(str).str.strip()
-    df_today = df_raw[df_raw["Date"].isin([d4, d2])].copy()
+    # Pick the trade date: after 8:30 PM -> today, otherwise previous trading day
+    df_raw["_trade_dt"] = parse_dates(df_raw["Date"])
+    trade_date = get_trade_date(now)
+    df_today = df_raw[df_raw["_trade_dt"].dt.date == trade_date].copy()
     if df_today.empty:
-        st.warning(f"No rows found for trade date {d4}. Using the entire file.")
-        df_today = df_raw.copy()
+        latest = df_raw["_trade_dt"].max()
+        if pd.isna(latest):
+            raise ValueError("Could not read any valid dates from the 'Date' column.")
+        st.warning(
+            f"No rows found for {trade_date.strftime('%d-%b-%Y')}. "
+            f"Using the latest date in the file instead: {latest.strftime('%d-%b-%Y')}.")
+        trade_date = latest.date()
+        df_today = df_raw[df_raw["_trade_dt"].dt.date == trade_date].copy()
+    st.caption(f"Trade date used: {trade_date.strftime('%d-%b-%Y')}")
 
-    # Expiry filter
-    exp4 = get_target_expiry_date(now)
+    # Expiry filter (based on the trade date, e.g. Monday data -> Tuesday expiry)
+    exp4 = get_target_expiry_date(trade_date)
     exp2 = exp4[:-4] + exp4[-2:]
     df_today["Expiry Date"] = df_today["Expiry Date"].astype(str).str.strip()
     df_exp = df_today[df_today["Expiry Date"].isin([exp4, exp2])].copy()
@@ -92,7 +133,7 @@ def process(df_raw, nifty_spot, now):
     return df
 
 
-uploaded = st.file_uploader("Upload today's bhavcopy CSV", type=["csv"])
+uploaded = st.file_uploader("Upload bhavcopy CSV", type=["csv"])
 spot = st.number_input("Current NIFTY spot price", min_value=0.0, value=22700.0, step=1.0)
 run = st.button("Generate", type="primary")
 
