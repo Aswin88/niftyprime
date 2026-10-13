@@ -150,7 +150,8 @@ def process(df_raw, nifty_spot, preopen, now):
     st.caption(f"Expiry used: {exp4}")
 
     # ATM and 100-interval strikes
-    atm = round(nifty_spot / 100) * 100
+    # Nearest hundred, halves round up (22364 -> 22400, 22320 -> 22300, 22350 -> 22400)
+    atm = math.floor(nifty_spot / 100 + 0.5) * 100
     df_100s = df_today[df_today["Strike Price"] % 100 == 0].copy()
     strikes = sorted(df_100s["Strike Price"].dropna().unique())
     if not strikes:
