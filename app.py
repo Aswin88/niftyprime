@@ -101,7 +101,7 @@ def add_signal_columns(df, preopen):
         higher = sorted(set(opp_vals[opp_vals > val]))[:3]
 
         df.at[i, "Green"] = str(val)
-        df.at[i, "Orange"] = str(df.at[i, "Prime Value (Rounded)"])
+        df.at[i, "Orange"] = str(df.at[i, "Prime Value"])
         df.at[i, "Black"] = str(lower.max()) if not lower.empty else ""
         df.at[i, "Blue"] = ", ".join(str(v) for v in higher)
 
@@ -170,7 +170,7 @@ def process(df_raw, nifty_spot, preopen, now):
 
     df = pd.DataFrame(records.values()).sort_values("Strike", ascending=False).reset_index(drop=True)
     df["Total (CE + PE)"] = df["CE"] + df["PE"]
-    df["Prime Value (Rounded)"] = df["Total (CE + PE)"].apply(prime_value)
+    df["Prime Value"] = df["Total (CE + PE)"].apply(prime_value)
 
     # ITM strikes from pre-open + Green / Orange / Blue / Black columns
     df, ce_strike, pe_strike, missing = add_signal_columns(df, preopen)
