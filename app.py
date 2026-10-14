@@ -143,9 +143,23 @@ def process(df_raw, nifty_spot, preopen, now):
     df_today["Expiry Date"] = df_today["Expiry Date"].astype(str).str.strip()
     df_exp = df_today[df_today["Expiry Date"].isin([exp4, exp2])].copy()
     if df_exp.empty:
-        raise ValueError(
-            f"Target expiry '{exp4}' not found. "
-            f"Available expiries: {list(df_today['Expiry Date'].unique())}")
+        # Target expiry missing (e.g. exchange holiday moved expiry earlier):
+        # use the available valid expiry nearest to the target date.
+        target_dt = datetime.strptime(exp4, "%d-%b-%Y").date()
+        df_today["_exp_dt"] = parse_dates(df_today["Expiry Date"])
+        candidates = sorted(
+            {d.date() for d in df_today["_exp_dt"].dropna() if d.date() > trade_date},
+            key=lambda d: (abs((d - target_dt).days), d))
+        if not candidates:
+            raise ValueError(
+                f"Target expiry '{exp4}' not found and no later expiry is available. "
+                f"Available expiries: {list(df_today['Expiry Date'].unique())}")
+        chosen = candidates[0]
+        st.warning(
+            f"Target expiry {exp4} not in the file (likely a holiday). "
+            f"Using nearest available expiry: {chosen.strftime('%d-%b-%Y')}.")
+        df_exp = df_today[df_today["_exp_dt"].dt.date == chosen].copy()
+        exp4 = chosen.strftime("%d-%b-%Y")
     df_today = df_exp
     st.caption(f"Expiry used: {exp4}")
 
