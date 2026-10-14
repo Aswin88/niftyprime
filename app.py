@@ -213,6 +213,24 @@ if run:
             df_final = process(pd.read_csv(uploaded), spot, preopen, now)
             st.subheader("Final processed NIFTY option window")
             st.dataframe(df_final, hide_index=True, use_container_width=True)
+
+            # Copy-ready levels for the TradingView "Strike Levels" indicator
+            ce_strike, pe_strike = get_itm_strikes(preopen)
+            st.subheader("Levels for indicator (copy into TradingView)")
+            for strike, side in [(ce_strike, "CE"), (pe_strike, "PE")]:
+                row = df_final[df_final["Strike"] == strike]
+                if row.empty or row.iloc[0]["Green"] == "":
+                    continue
+                r = row.iloc[0]
+                st.caption(f"{strike} {side}")
+                st.code(
+                    f"Green: {r['Green']}\n"
+                    f"Orange: {r['Orange']}\n"
+                    f"Black: {r['Black']}\n"
+                    f"Blue: {str(r['Blue']).replace(' ', '')}",
+                    language="text",
+                )
+
             st.download_button(
                 "Download CSV",
                 df_final.to_csv(index=False).encode("utf-8"),
